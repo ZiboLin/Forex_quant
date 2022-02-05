@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from DNNModel import *
 from tensorflow.keras.optimizers import Adam
 import tensorflow as tf 
+import pickle
 plt.style.use("seaborn")
 pd.set_option('display.float_format', lambda x: '%.5f' % x)
 
@@ -56,7 +57,8 @@ class DNN_Backtester():
 		############
 
 		############ Prepare data ############
-		self.features = ["Dir", "SMA", "Boll", "MACD", "Min", "Max", "Mom", "Vol"]
+		#self.features = ["Dir", "SMA", "Boll", "MACD", "Min", "Max", "Mom", "Vol"]
+		self.features = ["Dir", "SMA", "Boll", "Min", "Max", "Mom", "Vol"]
 		self.feature_columns = []
 		for f in self.features:
 			for lag in range(1,self.lags + 1):
@@ -73,6 +75,10 @@ class DNN_Backtester():
 		train = full_data.iloc[:split].copy()
 		test = full_data.iloc[split:].copy()
 		mu,std = train.mean(), train.std() # train set parameters (mu, std) for standardization
+		#for saving model
+		self.save_mu = mu
+		self.save_std = std
+
 		train_s = (train - mu) / std # standardization of train set features
 		test_s = (test - mu) / std  # standardization of test set features (with train set parameters!!!)
 
@@ -134,28 +140,13 @@ class DNN_Backtester():
 			plt.show()
 
 	def hit_ratio(self):
-		hits = np.sign(self.results.returns * self.results.position.shift(0)).value_counts()
+		hits = np.sign(self.results.returns * self.results.position).value_counts()
 		hit_ratio = hits[1.0]/sum(hits)
 		return hit_ratio
 
 	def save_model(self): 
 		self.model.save("DNN_model")
 		##########################
-		# import pickle
-		# params = {"mu":mu, "std":std}
-		# pickle.dump(params, open("params.pkl", "wb"))
-
-		# ###### Loading Model and Parameters
-		# import pandas as pd
-		# import numpy as np
-		# import tpqoa
-		# from datetime import datetime, timedelta
-		# import time
-		# import keras
-		# import pickle
-		# model = keras.models.load_model("DNN_model")
-		# params = pickle.load(open("params.pkl","rb"))
-		# mu = params["mu"]
-		# std = params["std"]
-
+		params = {"mu":self.save_mu, "std":self.save_std}
+		pickle.dump(params, open("params.pkl", "wb"))
 

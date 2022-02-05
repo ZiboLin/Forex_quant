@@ -28,18 +28,22 @@ class DNNTrader(tpqoa.tpqoa):
 		self.std = std
         #************************************************************************
 
-	def get_most_recent(self,days = 5):
-		while True:
+	def get_most_recent(self,days = 5): #use 5 days to avoid long public holiday
+		while True: #repeat until we get all historical bars 
 			time.sleep(2)
-			now = datatime.utcnow()
+			now = datetime.utcnow()
 			now = now - timedelta(microseconds = now.microsecond)
 			past = now - timedelta(days = days)
 			df = self.get_history(instrument = self.instrument, start = past, end = now,
 	                               granularity = "S5", price = "M", localize = False).c.dropna().to_frame()
 			df.rename(columns = {"c":self.instrument}, inplace = True)
-			df = df.resample(self.bar_length, label = "right").last().dropna().iloc[:-1]
+			#we use 5s because it is the most stable setting in oanda
+			#when resample historical data, we use dropna() instead of ffill()
+			#because there may be weekend in between, if we use live trading we can use ffill()
+			df = df.resample(self.bar_length, label = "right").last().dropna().iloc[:-1] #get the last bar in that timeframe,exclude the last bar because not completed 
 			self.raw_data = df.copy()
 			self.last_bar = self.raw_data.index[-1]
+			#accept, if less than [bar_length] has elapased since the last full historiacal bar and now 
 			if pd.to_datetime(datetime.utcnow()).tz_localize("UTC") - self.last_bar < self.bar_length:
 				# NEW -> Start Time of Trading Session 
 				self.start_time = pd.to_datetime(datetime.utcnow()).tz_localize("UTC") 
@@ -47,21 +51,22 @@ class DNNTrader(tpqoa.tpqoa):
 
 	def on_success(self,time,bid,ask):
 		print(self.ticks, end = " ")
-
+		# collect and store tick data
 		recent_tick = pd.to_datetime(time)
 		df = pd.DataFrame({self.instrument:(ask+bid)/2},index = [recent_tick])
 		self.tick_data = self.tick_data.append(df)
-
+		#if a time longer than the bar_length has elapsed between last full bar and the most recent time
 		if recent_tick - self.last_bar > self.bar_length:
 			self.resample_and_join()
 			self.define_strategy()
 			self.execute_trades()
 
 	def resample_and_join(self):
+		#append the most recent ticks(resample) to self.data 
 		self.raw_data = self.raw_data.append(self.tick_data.resample(self.bar_length,
 			label="right").last().ffill().iloc[:-1])
-		self.tick_data = self.tick_data.iloc[-1:]
-		self.last_bar = self.raw_data.index[-1]
+		self.tick_data = self.tick_data.iloc[-1:] #only keep the latest tick(next bar)
+		self.last_bar = self.raw_data.index[-1] #update time of last full bar 
 
 	def define_strategy(self):
 		df = self.raw_data.copy()
@@ -142,21 +147,23 @@ class DNNTrader(tpqoa.tpqoa):
 		print("{} | units = {} | price = {} | P&L = {} | Cum P&L = {}".format(time, units, price, pl, cumpl))
 		print(100 * "-" + "\n")  
 
-# Loading the model
-model = keras.models.load_model("DNN_model")
+#Only execute when directly called from terminal 
+if __name__ == "__main__": 
+	# Loading the model
+	model = keras.models.load_model("DNN_model")
 
-# Loading mu and std
-params = pickle.load(open("params.pkl", "rb"))
-mu = params["mu"]
-std = params["std"]
+	# Loading mu and std
+	params = pickle.load(open("params.pkl", "rb"))
+	mu = params["mu"]
+	std = params["std"]
 
-#initilise the class 
-trader = DNNTrader("oanda.cfg", "EUR_USD", bar_length = "20min",
-                   window = 50, lags = 5, model = model, mu = mu, std = std, units = 100000)
-trader.get_most_recent()
-trader.stream_data(trader.instrument, stop = 1000)
-if trader.position != 0:
-	close_order = trader.create_order(trader.instrument, units = -trader.position * trader.units, 
-		suppress = True, ret = True)
-	trader.report_trade(close_order,"Going NEUTRAL")
-	trader.position = 0 
+	#initilise the class 
+	trader = DNNTrader("oanda.cfg", "EUR_USD", bar_length = "20min",
+	                   window = 50, lags = 5, model = model, mu = mu, std = std, units = 100000)
+	trader.get_most_recent()
+	trader.stream_data(trader.instrument, stop = 1000)
+	if trader.position != 0:
+		close_order = trader.create_order(trader.instrument, units = -trader.position * trader.units, 
+			suppress = True, ret = True)
+		trader.report_trade(close_order,"Going NEUTRAL")
+		trader.position = 0 
