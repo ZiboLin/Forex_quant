@@ -28,7 +28,7 @@ class DNNTrader(tpqoa.tpqoa):
 		self.std = std
         #************************************************************************
 
-	def get_most_recent(self,days = 5): #use 5 days to avoid long public holiday
+	def get_most_recent(self,days = 6): #use 5 days to avoid long public holiday
 		while True: #repeat until we get all historical bars 
 			time.sleep(2)
 			now = datetime.utcnow()
@@ -49,10 +49,52 @@ class DNNTrader(tpqoa.tpqoa):
 				self.start_time = pd.to_datetime(datetime.utcnow()).tz_localize("UTC") 
 				break
 
+	def start_trading(self, days, max_attempts = 5, wait = 20, wait_increase = 0): #Error Handling
+		attempt = 0
+		success = False
+		while True:
+			try:
+				self.get_most_recent(days)
+				self.stream_data(self.instrument)
+			except Exception as e:
+				print(e, end = " | ")
+			else:
+				success = True 
+				break
+			finally:
+				attempt += 1
+				print("Attempt: {}".format(attempt), end = "\n")
+				if success == False:
+					if attempt >= max_attempts:
+						print("max_attempts reached !")
+						try: #try to terminate session
+							time.sleep(wait)
+							self.terminate_session(cause = "Unexpected Session Stop ( too many errors).")
+						except Exception as e:
+							print(e, end = " | ")
+							print("Could not terminate_session properly!")
+						finally:
+							break
+					else: # try again 
+						time.sleep(wait)
+						wait += wait_increase
+						self.tick_data = pd.DataFrame()
+
 	def on_success(self,time,bid,ask):
 		print(self.ticks, end = " ")
 		# collect and store tick data
 		recent_tick = pd.to_datetime(time)
+
+		#define stop because of low market violatility
+		# if recent_tick.time() >= pd.to_datetime("17:30").time():
+		# 	self.stop_stream = True
+
+		############## Define Stop ##############
+		# if self.ticks >= 100:
+		# 	self.terminate_session(cause = "Scheduled Session End.")
+		# 	return 
+		#########################################
+
 		df = pd.DataFrame({self.instrument:(ask+bid)/2},index = [recent_tick])
 		self.tick_data = self.tick_data.append(df)
 		#if a time longer than the bar_length has elapsed between last full bar and the most recent time
@@ -145,7 +187,18 @@ class DNNTrader(tpqoa.tpqoa):
 		print("\n" + 100* "-")
 		print("{} | {}".format(time, going))
 		print("{} | units = {} | price = {} | P&L = {} | Cum P&L = {}".format(time, units, price, pl, cumpl))
-		print(100 * "-" + "\n")  
+		print(100 * "-" + "\n")
+
+	def terminate_session(self, cause): #NEW
+		self.stop_stream = True
+		if self.position != 0:
+			close_order = self.create_order(self.instrument, units = -self.position * self.units,
+				suppress = True, ret = True)
+			self.report_trade(close_order, "GOING NEUTRAL")
+			self.position = 0
+		print(cause)
+
+
 
 #Only execute when directly called from terminal 
 if __name__ == "__main__": 
@@ -158,10 +211,13 @@ if __name__ == "__main__":
 	std = params["std"]
 
 	#initilise the class 
-	trader = DNNTrader("oanda.cfg", "EUR_USD", bar_length = "20min",
-	                   window = 50, lags = 5, model = model, mu = mu, std = std, units = 100000)
-	trader.get_most_recent()
-	trader.stream_data(trader.instrument, stop = 1000)
+	trader = DNNTrader("oanda.cfg", "EUR_USD", bar_length = "15min",
+	                   window = 50, lags = 5, model = model, mu = mu, std = std, units = 5000)
+
+	# trader.get_most_recent()
+	# trader.stream_data(trader.instrument)
+	trader.start_trading(days=6)
+
 	if trader.position != 0:
 		close_order = trader.create_order(trader.instrument, units = -trader.position * trader.units, 
 			suppress = True, ret = True)
